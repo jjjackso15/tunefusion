@@ -1,17 +1,28 @@
 # TuneFusion
 
-## Overview
-This repository contains the source code and documentation for the TuneFusion project.
+## What this is
+TuneFusion is a practice app concept that fuses **vocals + guitar** around real songs.
 
-The project is bootstrapped with a documentation-first approach. All requirements, architectural decisions, and handoff notes for AI collaborators are maintained in the `/docs` directory.
+It aims for **SingStar / Rocksmith vibes**:
+- Visual vocal pitch lanes and real-time pitch feedback/scoring
+- Chord prompts for guitar synchronized to the song
+- Practice tools like looping and slow-down
+- Multi-user profiles and (eventually) competition modes
+- Optional “radio DJ” style narration/coach mode
 
-### Current Status
-- [x] Initial project scaffold created.
-- [ ] Requirements imported from prior discussions.
-- [ ] Architecture defined.
-- [ ] Initial implementation started.
+## Documentation-first repo
+This repo is intentionally documentation-first:
+- Requirements: `docs/REQUIREMENTS.md` (source of truth)
+- Architecture: `docs/ARCHITECTURE.md`
+- AI collaboration / handoff notes: `docs/AI_HANDOFF.md`
 
-### Repository Structure
-- **/docs**: Contains all project documentation, including requirements, architecture, and AI handoff notes.
-- **/src**: Contains the main source code for the application.
-- **/tests**: Contains all automated tests.
+## Status
+- [x] Initial scaffold
+- [x] Requirements captured in `docs/REQUIREMENTS.md`
+- [ ] Choose target platform + tech stack
+- [ ] Implement MVP slice
+
+## Repo layout
+- `docs/` - specs and decisions
+- `src/` - implementation
+- `tests/` - automated tests
