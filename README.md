@@ -1,28 +1,31 @@
 # TuneFusion
 
-## What this is
-TuneFusion is a practice app concept that fuses **vocals + guitar** around real songs.
+TuneFusion is a **desktop-first** practice app concept that fuses **vocals + guitar** around real songs.
 
-It aims for **SingStar / Rocksmith vibes**:
-- Visual vocal pitch lanes and real-time pitch feedback/scoring
-- Chord prompts for guitar synchronized to the song
-- Practice tools like looping and slow-down
-- Multi-user profiles and (eventually) competition modes
-- Optional “radio DJ” style narration/coach mode
+Core idea: **artifact-first, local-first**.
+- You import audio.
+- A versioned analysis pipeline generates cached artifacts (pitch contour, chords, beat grid, etc.).
+- The UI + coach layer read artifacts (not raw audio) to drive practice, scoring, and hints.
 
-## Documentation-first repo
-This repo is intentionally documentation-first:
-- Requirements: `docs/REQUIREMENTS.md` (source of truth)
+## Stack (planned)
+- Desktop: **Tauri**
+- UI: **React + TypeScript**
+- Backend: **Rust**
+- Storage: **SQLite + filesystem artifacts**
+
+## Docs
 - Architecture: `docs/ARCHITECTURE.md`
-- AI collaboration / handoff notes: `docs/AI_HANDOFF.md`
+- Data model + folder layout: `docs/DATA_MODEL.md`
+- Roadmap: `docs/ROADMAP.md`
+- Dev notes: `docs/DEV_NOTES.md`
+- Product requirements: `docs/REQUIREMENTS.md`
 
-## Status
-- [x] Initial scaffold
-- [x] Requirements captured in `docs/REQUIREMENTS.md`
-- [ ] Choose target platform + tech stack
-- [ ] Implement MVP slice
+## Dev quick-start (high level)
+This repo is currently **docs + scaffold only**.
 
-## Repo layout
-- `docs/` - specs and decisions
-- `src/` - implementation
-- `tests/` - automated tests
+Once the workspace is wired up:
+- `pnpm install`
+- `pnpm -C apps/desktop dev`
+
+## Local-first note
+TuneFusion is designed to work without cloud by default. Competition/sync is a future optional layer.
