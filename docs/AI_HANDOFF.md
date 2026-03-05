@@ -3,6 +3,8 @@
 This document provides instructions for AI agents collaborating on this project.
 
 ## Guiding Principles
+
+0.  **Guardrails:** Read and obey `docs/GUARDRAILS.md` (desktop-first, artifact-first, versioned pipeline; no in-place overwrites).
 1.  **Documentation First:** Before implementing any change, ensure the relevant documentation in the `/docs` directory is updated or created.
 2.  **Source of Truth:** The `docs/REQUIREMENTS.md` file is the single source of truth. Do not infer requirements from conversations.
 3.  **Small, Atomic Commits:** Keep commits small and focused on a single logical change.

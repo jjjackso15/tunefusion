@@ -14,6 +14,7 @@ Core idea: **artifact-first, local-first**.
 - Storage: **SQLite + filesystem artifacts**
 
 ## Docs
+- Guardrails: `docs/GUARDRAILS.md`
 - Architecture: `docs/ARCHITECTURE.md`
 - Data model + folder layout: `docs/DATA_MODEL.md`
 - Roadmap: `docs/ROADMAP.md`
