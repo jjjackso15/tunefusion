@@ -7,6 +7,9 @@ Core idea: **artifact-first, local-first**.
 - A versioned analysis pipeline generates cached artifacts (pitch contour, chords, beat grid, etc.).
 - The UI + coach layer read artifacts (not raw audio) to drive practice, scoring, and hints.
 
+## Development
+AI agents and contributors should read **AGENT_GUIDELINES.md** before making structural changes.
+
 ## Stack (planned)
 - Desktop: **Tauri**
 - UI: **React + TypeScript**
