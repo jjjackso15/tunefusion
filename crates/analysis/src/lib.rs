@@ -1,84 +1,91 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
-const PIPELINE_VERSION: &str = "v0.waveform.1";
+use audio_engine::{decode_to_pcm, mixdown_mono};
+
+pub const ARTIFACT_KIND_WAVEFORM_PEAKS: &str = "waveform_peaks";
+pub const SCHEMA_VERSION: &str = "1";
+pub const PIPELINE_VERSION: &str = "waveform_peaks@0.1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnalysisArtifact {
+pub struct WaveformParams {
+    /// Number of peak buckets across the track.
+    pub buckets: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactEnvelope {
+    pub kind: String,
+    pub schema_version: String,
+
     pub run_id: String,
+    pub created_at: String,
+
     pub pipeline_version: String,
-    pub source_audio_path: String,
+    pub params: WaveformParams,
+    pub params_hash: String,
+
+    pub audio_hash: String,
     pub sample_rate: u32,
+
+    /// Peak magnitude per bucket (0..1, best-effort)
     pub waveform_peaks: Vec<f32>,
 }
 
-pub fn analyze_audio_to_artifact(audio_path: &Path, artifacts_root: &Path) -> Result<AnalysisArtifact> {
-    let (sample_rate, samples) = load_wav_mono_samples(audio_path)?;
-    let waveform_peaks = compute_waveform_peaks(&samples, 256);
+/// Analyze an audio file, compute waveform peaks, and write an artifact JSON file.
+///
+/// Artifact-first rules:
+/// - Never overwrites: writes under `artifacts_root/analysis_runs/<run_id>/waveform_peaks.json`.
+/// - Includes `pipeline_version`, `params`, and `params_hash`.
+/// - Includes `audio_hash` (sha256 of source audio bytes).
+pub fn analyze_waveform_to_artifact_json(
+    audio_path: &Path,
+    artifacts_root: &Path,
+) -> Result<ArtifactEnvelope> {
+    let params = WaveformParams { buckets: 256 };
+
+    let audio_hash = sha256_file(audio_path)
+        .with_context(|| format!("failed hashing audio file: {}", audio_path.display()))?;
+
+    let params_hash = sha256_bytes(&serde_json::to_vec(&params)?);
+
+    let pcm = decode_to_pcm(audio_path)
+        .with_context(|| format!("decode failed: {}", audio_path.display()))?;
+    let samples_mono = mixdown_mono(&pcm);
+
+    let waveform_peaks = compute_waveform_peaks(&samples_mono, params.buckets);
 
     let run_id = Uuid::new_v4().to_string();
     let run_dir = artifacts_root.join("analysis_runs").join(&run_id);
     fs::create_dir_all(&run_dir)
-        .with_context(|| format!("failed to create artifact run directory: {}", run_dir.display()))?;
+        .with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
 
-    let artifact = AnalysisArtifact {
+    let envelope = ArtifactEnvelope {
+        kind: ARTIFACT_KIND_WAVEFORM_PEAKS.to_string(),
+        schema_version: SCHEMA_VERSION.to_string(),
         run_id,
+        created_at: chrono::Utc::now().to_rfc3339(),
         pipeline_version: PIPELINE_VERSION.to_string(),
-        source_audio_path: audio_path.display().to_string(),
-        sample_rate,
+        params,
+        params_hash,
+        audio_hash,
+        sample_rate: pcm.sample_rate,
         waveform_peaks,
     };
 
-    let analysis_json_path = run_dir.join("analysis.json");
-    let json = serde_json::to_string_pretty(&artifact)?;
-    fs::write(&analysis_json_path, json)
-        .with_context(|| format!("failed writing artifact: {}", analysis_json_path.display()))?;
+    let json_path = run_dir.join("waveform_peaks.json");
+    let json = serde_json::to_string_pretty(&envelope)?;
+    fs::write(&json_path, json)
+        .with_context(|| format!("failed writing artifact json: {}", json_path.display()))?;
 
-    Ok(artifact)
+    Ok(envelope)
 }
 
-pub fn load_wav_mono_samples(path: &Path) -> Result<(u32, Vec<f32>)> {
-    let mut reader = hound::WavReader::open(path)
-        .with_context(|| format!("failed to open wav file: {}", path.display()))?;
-
-    let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
-    let channels = spec.channels.max(1) as usize;
-
-    let all_samples: Vec<f32> = match (spec.sample_format, spec.bits_per_sample) {
-        (hound::SampleFormat::Int, 16) => reader
-            .samples::<i16>()
-            .map(|s| s.map(|v| v as f32 / i16::MAX as f32))
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (hound::SampleFormat::Int, 24 | 32) => reader
-            .samples::<i32>()
-            .map(|s| s.map(|v| v as f32 / i32::MAX as f32))
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        (hound::SampleFormat::Float, 32) => reader
-            .samples::<f32>()
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-        _ => anyhow::bail!(
-            "unsupported wav format: {:?} {} bits",
-            spec.sample_format,
-            spec.bits_per_sample
-        ),
-    };
-
-    if channels == 1 {
-        return Ok((sample_rate, all_samples));
-    }
-
-    let mono = all_samples
-        .chunks(channels)
-        .map(|frame| frame.iter().copied().sum::<f32>() / channels as f32)
-        .collect::<Vec<_>>();
-
-    Ok((sample_rate, mono))
-}
-
+/// Compute peak magnitude per bucket across samples.
 pub fn compute_waveform_peaks(samples: &[f32], buckets: usize) -> Vec<f32> {
     if samples.is_empty() || buckets == 0 {
         return Vec::new();
@@ -89,6 +96,17 @@ pub fn compute_waveform_peaks(samples: &[f32], buckets: usize) -> Vec<f32> {
         .chunks(chunk_size.max(1))
         .map(|chunk| chunk.iter().fold(0.0_f32, |acc, &s| acc.max(s.abs())))
         .collect()
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = fs::read(path)?;
+    Ok(sha256_bytes(&bytes))
 }
 
 #[cfg(test)]
@@ -104,7 +122,8 @@ mod tests {
     }
 
     #[test]
-    fn writes_analysis_artifact_json() {
+    fn writes_waveform_artifact_json() {
+        // generate a small wav file
         let dir = tempdir().unwrap();
         let wav_path = dir.path().join("test.wav");
         let mut writer = hound::WavWriter::create(
@@ -123,16 +142,24 @@ mod tests {
         }
         writer.finalize().unwrap();
 
-        let artifact = analyze_audio_to_artifact(&wav_path, dir.path()).unwrap();
+        let artifact = analyze_waveform_to_artifact_json(&wav_path, dir.path()).unwrap();
+
         let artifact_path = dir
             .path()
             .join("analysis_runs")
             .join(&artifact.run_id)
-            .join("analysis.json");
+            .join("waveform_peaks.json");
 
         assert!(artifact_path.exists());
+
+        // schema validation: can read back into the same struct
         let content = fs::read_to_string(artifact_path).unwrap();
-        assert!(content.contains("\"waveform_peaks\""));
-        assert!(content.contains("\"pipeline_version\""));
+        let parsed: ArtifactEnvelope = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.kind, ARTIFACT_KIND_WAVEFORM_PEAKS);
+        assert_eq!(parsed.schema_version, SCHEMA_VERSION);
+        assert_eq!(parsed.pipeline_version, PIPELINE_VERSION);
+        assert_eq!(parsed.params_hash.len(), 64);
+        assert_eq!(parsed.audio_hash.len(), 64);
+        assert!(!parsed.waveform_peaks.is_empty());
     }
 }

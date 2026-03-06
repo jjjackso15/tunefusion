@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/analysis",
+    "crates/audio_engine"
+]
+
+resolver = "2"

@@ -1,0 +1,24 @@
+[package]
+name = "audio_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+
+# Symphonia is the preferred cross-platform decoder (pure Rust)
+# Enable minimal features initially; expand codecs as needed.
+symphonia = { version = "0.5", default-features = false, features = [
+  "wav",
+  "mp3",
+  "flac",
+  "ogg",
+  "vorbis",
+  "pcm",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+hound = "3"
+approx = "0.5"
