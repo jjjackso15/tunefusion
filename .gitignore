@@ -1,0 +1,8 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+
+# Tauri
+/apps/desktop/src-tauri/target/
