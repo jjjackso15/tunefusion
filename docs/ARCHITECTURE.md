@@ -85,12 +85,27 @@ Currently implemented artifact types:
 - Reads artifacts + session performance
 - Generates coaching hints, loop suggestions, and DJ-style narration cues
 
-## 4) Future extensions
-- **Realtime coaching**: low-latency pitch detection during playback; overlay feedback in UI.
-- **Multi-user competition**: local profiles first; later optional cloud sync.
-- **Sync/export**: export project bundles (audio + artifacts + sessions) for sharing/backups.
+## 4) Platform-Specific Storage Paths (Target State)
+The following describes the **target state** (not fully implemented yet).
 
-## 5) Minimal sequence diagram
+TuneFusion will follow the **XDG Base Directory Specification** (and equivalents on other platforms) via Tauri:
+- **Metadata:** `tunefusion.sqlite` in `appDataDir`.
+- **Artifacts:** `appDataDir/projects/<projectId>/...`
+- **Cache:** `appCacheDir/analysis_runs/...`
+
+Commands must always use `tauri::AppHandle` to resolve paths rather than hardcoding local relative paths.
+
+Current state (as of 2026-03-07): `apps/desktop/src-tauri/src/main.rs` still passes a relative `artifacts` path and needs migration to `appDataDir`.
+
+## 5) Type Safety & Synchronization (Target State)
+The following is also a **target-state rule** that will be enforced as type generation is added:
+
+To prevent drift between Rust structs (backend) and TypeScript interfaces (frontend):
+- **Tooling:** Use `ts-rs` or `specta` to automatically generate TypeScript definitions from Rust source files during build or on demand.
+- **Location:** Generated types should be written to `apps/desktop/src/types/generated/`.
+- **Rule:** Do **not** manually define `ArtifactEnvelope` or `ArtifactPayload` types in React; always import from the generated definitions.
+
+## 6) Minimal sequence diagram
 
 ```text
 User            UI (React)           Rust Core (Tauri)        Analysis Pipeline        Storage (SQLite+FS)
@@ -109,3 +124,8 @@ User            UI (React)           Rust Core (Tauri)        Analysis Pipeline 
  |---------------->| persist session+score  |--------------------->|                          |
  |                 |                        |------------------------->| write session + score
 ```
+
+## 7) Demo Artifact Policy
+- Runtime-generated analysis outputs under `apps/desktop/src-tauri/artifacts/analysis_runs/` are treated as ephemeral and are git-ignored.
+- Curated demo artifacts are allowed in git and should be stored under `apps/desktop/src-tauri/artifacts/demo/`.
+- Demo artifacts must be deterministic snapshots intended for docs, test fixtures, or product demos; avoid committing machine-specific scratch output.

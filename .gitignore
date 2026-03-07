@@ -6,3 +6,6 @@ node_modules/
 
 # Tauri
 /apps/desktop/src-tauri/target/
+
+# Tauri generated analysis output (track curated demo artifacts separately)
+/apps/desktop/src-tauri/artifacts/analysis_runs/
