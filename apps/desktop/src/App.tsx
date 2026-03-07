@@ -1,6 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+
+type TrackRecord = {
+  id: string;
+  title: string;
+  audio_path: string;
+  audio_hash: string;
+  sample_rate: number;
+  duration_seconds: number;
+  created_at: string;
+};
 
 type WaveformArtifact = {
   run_id: string;
@@ -23,10 +33,11 @@ type PitchContourArtifact = {
 
 function Waveform({ peaks }: { peaks: number[] }) {
   const bars = useMemo(
-    () => peaks.map((peak, i) => ({
-      x: i,
-      h: Math.max(1, Math.round(peak * 100)),
-    })),
+    () =>
+      peaks.map((peak, i) => ({
+        x: i,
+        h: Math.max(1, Math.round(peak * 100)),
+      })),
     [peaks]
   );
 
@@ -51,13 +62,8 @@ function PitchStats({ artifact }: { artifact: PitchContourArtifact }) {
   const { pitch_contour } = artifact;
   const voicedCount = pitch_contour.voiced.filter(Boolean).length;
   const totalFrames = pitch_contour.voiced.length;
-  const voicedFreqs = pitch_contour.frequencies_hz.filter(
-    (f): f is number => f !== null
-  );
-  const meanFreq =
-    voicedFreqs.length > 0
-      ? voicedFreqs.reduce((a, b) => a + b, 0) / voicedFreqs.length
-      : 0;
+  const voicedFreqs = pitch_contour.frequencies_hz.filter((f): f is number => f !== null);
+  const meanFreq = voicedFreqs.length > 0 ? voicedFreqs.reduce((a, b) => a + b, 0) / voicedFreqs.length : 0;
 
   return (
     <section>
@@ -67,23 +73,36 @@ function PitchStats({ artifact }: { artifact: PitchContourArtifact }) {
         <strong>Voiced frames:</strong> {voicedCount} / {totalFrames} (
         {totalFrames > 0 ? ((voicedCount / totalFrames) * 100).toFixed(1) : 0}%)
       </p>
-      {meanFreq > 0 && (
-        <p><strong>Mean pitch:</strong> {meanFreq.toFixed(1)} Hz</p>
-      )}
+      {meanFreq > 0 && <p><strong>Mean pitch:</strong> {meanFreq.toFixed(1)} Hz</p>}
     </section>
   );
 }
 
 export default function App() {
-  const [selectedPath, setSelectedPath] = useState('');
+  const [tracks, setTracks] = useState<TrackRecord[]>([]);
+  const [selectedTrackId, setSelectedTrackId] = useState('');
   const [waveformArtifact, setWaveformArtifact] = useState<WaveformArtifact | null>(null);
   const [pitchArtifact, setPitchArtifact] = useState<PitchContourArtifact | null>(null);
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
-  const onSelectAudio = async () => {
-    const isTauri = Boolean((window as any).__TAURI_INTERNALS__);
+  const selectedTrack = tracks.find((t) => t.id === selectedTrackId) ?? null;
 
+  const refreshTracks = async () => {
+    const loaded = await invoke<TrackRecord[]>('list_tracks');
+    setTracks(loaded);
+    if (loaded.length > 0 && !selectedTrackId) {
+      setSelectedTrackId(loaded[0].id);
+    }
+  };
+
+  useEffect(() => {
+    refreshTracks().catch((e) => setError(String(e)));
+  }, []);
+
+  const onImportAudio = async () => {
+    const isTauri = Boolean((window as any).__TAURI_INTERNALS__);
     if (!isTauri) {
       setError('File paths are not available in web mode. Run with: pnpm tauri dev');
       return;
@@ -91,26 +110,45 @@ export default function App() {
 
     const selected = await open({
       multiple: false,
-      title: 'Select audio file',
+      title: 'Import audio file',
       filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'ogg'] }],
     });
 
     if (!selected) {
-      setError('No file selected.');
       return;
     }
 
-    const filePath = selected;
-    setSelectedPath(filePath);
     setError('');
+    setImporting(true);
+
+    try {
+      const track = await invoke<TrackRecord>('import_track', { audioPath: selected });
+      await refreshTracks();
+      setSelectedTrackId(track.id);
+      setWaveformArtifact(null);
+      setPitchArtifact(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const onAnalyzeTrack = async () => {
+    if (!selectedTrackId) {
+      setError('Select a track first.');
+      return;
+    }
+
+    setError('');
+    setAnalyzing(true);
     setWaveformArtifact(null);
     setPitchArtifact(null);
-    setAnalyzing(true);
 
     try {
       const [waveform, pitch] = await Promise.all([
-        invoke<WaveformArtifact>('analyze_audio_file', { audioPath: filePath }),
-        invoke<PitchContourArtifact>('analyze_pitch_contour', { audioPath: filePath }),
+        invoke<WaveformArtifact>('analyze_audio_file', { trackId: selectedTrackId }),
+        invoke<PitchContourArtifact>('analyze_pitch_contour', { trackId: selectedTrackId }),
       ]);
       setWaveformArtifact(waveform);
       setPitchArtifact(pitch);
@@ -125,11 +163,38 @@ export default function App() {
     <main style={{ fontFamily: 'system-ui', padding: 16, maxWidth: 900 }}>
       <h1>TuneFusion</h1>
 
-      <button onClick={onSelectAudio} disabled={analyzing} style={{ padding: '8px 16px', fontSize: 16 }}>
-        {analyzing ? 'Analyzing...' : 'Open Audio File'}
-      </button>
+      <section style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+        <button onClick={onImportAudio} disabled={importing || analyzing} style={{ padding: '8px 16px', fontSize: 16 }}>
+          {importing ? 'Importing...' : 'Import Audio File'}
+        </button>
 
-      {selectedPath && <p><strong>Selected:</strong> {selectedPath}</p>}
+        <button
+          onClick={onAnalyzeTrack}
+          disabled={analyzing || importing || !selectedTrackId}
+          style={{ padding: '8px 16px', fontSize: 16 }}
+        >
+          {analyzing ? 'Analyzing...' : 'Analyze Selected Track'}
+        </button>
+      </section>
+
+      <section>
+        <h2>Tracks</h2>
+        {tracks.length === 0 && <p>No tracks imported yet.</p>}
+        {tracks.length > 0 && (
+          <select
+            value={selectedTrackId}
+            onChange={(e) => setSelectedTrackId(e.target.value)}
+            style={{ width: '100%', maxWidth: 720, padding: 8, marginBottom: 8 }}
+          >
+            {tracks.map((track) => (
+              <option key={track.id} value={track.id}>
+                {track.title} ({track.duration_seconds.toFixed(1)}s)
+              </option>
+            ))}
+          </select>
+        )}
+        {selectedTrack && <p><strong>Path:</strong> {selectedTrack.audio_path}</p>}
+      </section>
 
       {waveformArtifact && (
         <section>
