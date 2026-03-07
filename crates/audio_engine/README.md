@@ -1,11 +1,12 @@
 # crates/audio_engine
 
-Rust crate for audio playback + timing utilities.
+Rust crate for audio decoding + playback utilities.
 
-## Responsibilities (planned)
-- Decode audio to PCM for analysis (shared helpers)
+## Implemented
+- **`decode_to_pcm`** — decode audio files (MP3, WAV, FLAC, OGG/Vorbis) to interleaved f32 PCM via Symphonia
+- **`mixdown_mono`** — mix multi-channel audio to mono
+- **`PcmBuffer`** — sample rate, channel count, interleaved frames
+
+## Planned
 - Playback clock + transport controls
-- (Later) time-stretch / pitch-shift for practice mode
-
-## Status
-Scaffold only.
+- Time-stretch / pitch-shift for practice mode

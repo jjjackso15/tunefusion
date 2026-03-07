@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/analysis",
-    "crates/audio_engine"
+    "crates/audio_engine",
+    "apps/desktop/src-tauri"
 ]
-
 resolver = "2"

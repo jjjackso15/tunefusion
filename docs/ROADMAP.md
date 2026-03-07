@@ -15,6 +15,18 @@
 - Local profiles (simple name-based)
 - Persist sessions + a basic score
 
+### Progress
+- [x] Tauri 2 + React scaffold with native file dialog
+- [x] Audio decoding (MP3, WAV, FLAC, OGG) via Symphonia
+- [x] Waveform peaks artifact (`waveform_peaks@0.1`)
+- [x] Pitch contour artifact (`pitch_contour@0.1`) via pYIN
+- [x] Generalized `ArtifactEnvelope` supporting multiple artifact types
+- [x] UI displays waveform + pitch stats
+- [ ] Chord timeline detection
+- [ ] Practice view (pitch lanes, chord prompts)
+- [ ] Local profiles
+- [ ] Session persistence + scoring
+
 ### Non-goals
 - Cloud sync
 - Public sharing

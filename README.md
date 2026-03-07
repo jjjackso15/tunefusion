@@ -10,11 +10,18 @@ Core idea: **artifact-first, local-first**.
 ## Development
 AI agents and contributors should read **AGENT_GUIDELINES.md** before making structural changes.
 
-## Stack (planned)
-- Desktop: **Tauri**
+## Stack
+- Desktop: **Tauri 2**
 - UI: **React + TypeScript**
 - Backend: **Rust**
 - Storage: **SQLite + filesystem artifacts**
+
+## Current status
+The analysis pipeline produces two artifact types:
+- **Waveform peaks** — peak magnitudes per bucket for waveform visualization
+- **Pitch contour** — pYIN-based F0 estimation with voicing confidence
+
+The desktop app can import audio (MP3/WAV/FLAC/OGG), run both analyses, and display results.
 
 ## Docs
 - Guardrails: `docs/GUARDRAILS.md`
@@ -23,13 +30,19 @@ AI agents and contributors should read **AGENT_GUIDELINES.md** before making str
 - Roadmap: `docs/ROADMAP.md`
 - Dev notes: `docs/DEV_NOTES.md`
 - Product requirements: `docs/REQUIREMENTS.md`
+- Release notes: `CHANGELOG.md`
 
-## Dev quick-start (high level)
-This repo is currently **docs + scaffold only**.
+## Dev quick-start
+```bash
+# install JS deps
+pnpm install
 
-Once the workspace is wired up:
-- `pnpm install`
-- `pnpm -C apps/desktop dev`
+# run desktop app
+pnpm -C apps/desktop tauri dev
+
+# run Rust tests
+cargo test
+```
 
 ## Local-first note
 TuneFusion is designed to work without cloud by default. Competition/sync is a future optional layer.

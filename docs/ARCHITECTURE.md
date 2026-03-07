@@ -62,6 +62,12 @@ This supports reproducibility and “upgrade analysis without breaking old proje
 - Orchestrates pipeline steps
 - Produces artifacts + writes metadata
 - Must be deterministic given the same input + params + version
+- Modular: `lib.rs` (shared envelope + helpers), `waveform.rs`, `pitch_contour.rs`
+- Uses `ArtifactPayload` enum to support multiple artifact types with a shared `ArtifactEnvelope`
+
+Currently implemented artifact types:
+- `waveform_peaks` (pipeline `waveform_peaks@0.1`) — 256-bucket peak magnitudes
+- `pitch_contour` (pipeline `pitch_contour@0.1`) — pYIN F0 estimation + voicing confidence
 
 ### 3.4 `crates/audio_engine` (playback + timing)
 - Playback transport + synchronization clock

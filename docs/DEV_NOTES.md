@@ -11,23 +11,30 @@
 - `crates/audio_engine/` — audio playback + timing utilities
 - `packages/shared/` — shared TS types/schemas
 
-## 3) Common commands (placeholders)
+## 3) Common commands
 From repo root:
 
 ```bash
-# install JS deps (when workspace is created)
+# install JS deps
 pnpm install
 
-# run desktop app (when Tauri app exists)
-pnpm -C apps/desktop dev
+# run desktop app (Tauri 2)
+pnpm -C apps/desktop tauri dev
 
-# run Rust tests
+# run Rust tests (all crates)
 cargo test
+
+# run analysis crate tests only
+cargo test -p analysis
+
+# check compilation without building
+cargo check
 ```
 
-## 4) Troubleshooting (placeholders)
+## 4) Troubleshooting
 - If Tauri build fails on Linux, confirm system deps for webkit2gtk are installed.
-- If audio decoding fails, verify you have the codec support you expect (FFmpeg vs pure Rust crates).
+- If audio decoding fails, verify you have the codec support you expect. TuneFusion uses Symphonia (pure Rust) — no FFmpeg required.
+- If pitch detection panics, ensure audio is long enough (>0.5s) for pYIN frame analysis.
 
 ## 5) Re-running analysis with a new pipelineVersion
 Principle: **never mutate old artifacts in place**.

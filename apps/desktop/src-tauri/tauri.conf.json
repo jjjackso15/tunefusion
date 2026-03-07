@@ -1,22 +1,15 @@
 {
-  "$schema": "https://schema.tauri.app/config/1",
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TuneFusion",
+  "version": "0.1.0",
+  "identifier": "com.tunefusion.app",
   "build": {
-    "beforeDevCommand": "npm --prefix ../desktop run dev",
-    "beforeBuildCommand": "npm --prefix ../desktop run build",
-    "devPath": "http://localhost:5173",
-    "distDir": "../desktop/dist"
+    "beforeDevCommand": "pnpm dev -- --port 5173",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "TuneFusion",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "dialog": {
-        "open": true
-      }
-    },
+  "app": {
     "windows": [
       {
         "title": "TuneFusion",
@@ -24,5 +17,6 @@
         "height": 700
       }
     ]
-  }
+  },
+  "plugins": {}
 }

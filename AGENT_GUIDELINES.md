@@ -73,11 +73,14 @@ app_data/
 # Repository Layout
 
 ```
-apps/desktop/        Tauri + React desktop UI
-crates/audio_engine/ Low-level audio utilities
-crates/analysis/     Analysis pipeline + artifact generation
-packages/shared/     Shared types and interfaces
-docs/                Architecture, roadmap, ADRs
+apps/desktop/             Tauri 2 + React desktop UI
+crates/audio_engine/      Audio decoding (Symphonia) + mono mixdown
+crates/analysis/          Analysis pipeline + artifact generation
+  src/lib.rs              Shared ArtifactEnvelope, ArtifactPayload enum, helpers
+  src/waveform.rs         Waveform peaks analysis
+  src/pitch_contour.rs    pYIN pitch contour analysis
+packages/shared/          Shared types and interfaces
+docs/                     Architecture, roadmap, ADRs
 ```
 
 ---

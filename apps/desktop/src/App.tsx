@@ -1,12 +1,24 @@
-import { ChangeEvent, useMemo, useState } from 'react';
-import { invoke } from '@tauri-apps/api/tauri';
+import { useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 
-type AnalysisArtifact = {
+type WaveformArtifact = {
   run_id: string;
   pipeline_version: string;
-  source_audio_path: string;
   sample_rate: number;
   waveform_peaks: number[];
+};
+
+type PitchContourArtifact = {
+  run_id: string;
+  pipeline_version: string;
+  sample_rate: number;
+  pitch_contour: {
+    times_s: number[];
+    frequencies_hz: (number | null)[];
+    voiced: boolean[];
+    voiced_prob: number[];
+  };
 };
 
 function Waveform({ peaks }: { peaks: number[] }) {
@@ -35,54 +47,102 @@ function Waveform({ peaks }: { peaks: number[] }) {
   );
 }
 
+function PitchStats({ artifact }: { artifact: PitchContourArtifact }) {
+  const { pitch_contour } = artifact;
+  const voicedCount = pitch_contour.voiced.filter(Boolean).length;
+  const totalFrames = pitch_contour.voiced.length;
+  const voicedFreqs = pitch_contour.frequencies_hz.filter(
+    (f): f is number => f !== null
+  );
+  const meanFreq =
+    voicedFreqs.length > 0
+      ? voicedFreqs.reduce((a, b) => a + b, 0) / voicedFreqs.length
+      : 0;
+
+  return (
+    <section>
+      <p><strong>Run:</strong> {artifact.run_id}</p>
+      <p><strong>Pipeline:</strong> {artifact.pipeline_version}</p>
+      <p>
+        <strong>Voiced frames:</strong> {voicedCount} / {totalFrames} (
+        {totalFrames > 0 ? ((voicedCount / totalFrames) * 100).toFixed(1) : 0}%)
+      </p>
+      {meanFreq > 0 && (
+        <p><strong>Mean pitch:</strong> {meanFreq.toFixed(1)} Hz</p>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [selectedPath, setSelectedPath] = useState('');
-  const [artifact, setArtifact] = useState<AnalysisArtifact | null>(null);
+  const [waveformArtifact, setWaveformArtifact] = useState<WaveformArtifact | null>(null);
+  const [pitchArtifact, setPitchArtifact] = useState<PitchContourArtifact | null>(null);
   const [error, setError] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
 
-  const onSelectAudio = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const onSelectAudio = async () => {
+    const isTauri = Boolean((window as any).__TAURI_INTERNALS__);
 
-    // In Tauri runtime, File has a local filesystem path.
-    const filePath = (file as File & { path?: string }).path;
-    if (!filePath) {
-      setError('Could not resolve local file path.');
+    if (!isTauri) {
+      setError('File paths are not available in web mode. Run with: pnpm tauri dev');
       return;
     }
 
+    const selected = await open({
+      multiple: false,
+      title: 'Select audio file',
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'ogg'] }],
+    });
+
+    if (!selected) {
+      setError('No file selected.');
+      return;
+    }
+
+    const filePath = selected;
     setSelectedPath(filePath);
     setError('');
+    setWaveformArtifact(null);
+    setPitchArtifact(null);
+    setAnalyzing(true);
 
     try {
-      const analysis = await invoke<AnalysisArtifact>('analyze_audio_file', { audioPath: filePath });
-      setArtifact(analysis);
+      const [waveform, pitch] = await Promise.all([
+        invoke<WaveformArtifact>('analyze_audio_file', { audioPath: filePath }),
+        invoke<PitchContourArtifact>('analyze_pitch_contour', { audioPath: filePath }),
+      ]);
+      setWaveformArtifact(waveform);
+      setPitchArtifact(pitch);
     } catch (e) {
       setError(String(e));
-      setArtifact(null);
+    } finally {
+      setAnalyzing(false);
     }
   };
 
   return (
     <main style={{ fontFamily: 'system-ui', padding: 16, maxWidth: 900 }}>
-      <h1>TuneFusion – Waveform Slice</h1>
+      <h1>TuneFusion</h1>
 
-      <label>
-        Select audio (.wav):{' '}
-        <input type="file" accept="audio/wav" onChange={onSelectAudio} />
-      </label>
+      <button onClick={onSelectAudio} disabled={analyzing} style={{ padding: '8px 16px', fontSize: 16 }}>
+        {analyzing ? 'Analyzing...' : 'Open Audio File'}
+      </button>
 
       {selectedPath && <p><strong>Selected:</strong> {selectedPath}</p>}
 
-      {artifact && (
+      {waveformArtifact && (
         <section>
-          <p><strong>Run:</strong> {artifact.run_id}</p>
-          <p><strong>Pipeline:</strong> {artifact.pipeline_version}</p>
-          <p>
-            <strong>Artifact:</strong>{' '}
-            artifacts/analysis_runs/{artifact.run_id}/analysis.json
-          </p>
-          <Waveform peaks={artifact.waveform_peaks} />
+          <h2>Waveform</h2>
+          <p><strong>Run:</strong> {waveformArtifact.run_id}</p>
+          <Waveform peaks={waveformArtifact.waveform_peaks} />
+        </section>
+      )}
+
+      {pitchArtifact && (
+        <section>
+          <h2>Pitch Contour</h2>
+          <PitchStats artifact={pitchArtifact} />
         </section>
       )}
 
