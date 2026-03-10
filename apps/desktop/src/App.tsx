@@ -352,6 +352,40 @@ export default function App() {
     }
   };
 
+  const onDebugDemucs = async () => {
+    setError('');
+    try {
+      const info = await invoke<{
+        home_dir: string | null;
+        python_version: string | null;
+        pythonpath_set: string | null;
+        path_set: string | null;
+        site_packages_found: string[];
+        demucs_import_result: string;
+        demucs_location: string | null;
+      }>('debug_demucs_environment');
+
+      const debugText = [
+        '=== Demucs Debug Info ===',
+        `HOME: ${info.home_dir || 'NOT SET'}`,
+        `Python: ${info.python_version || 'NOT FOUND'}`,
+        '',
+        '=== Site Packages ===',
+        ...info.site_packages_found,
+        '',
+        `PYTHONPATH would be: ${info.pythonpath_set || 'NONE'}`,
+        '',
+        `Demucs import: ${info.demucs_import_result}`,
+        `Demucs location: ${info.demucs_location || 'NOT FOUND'}`,
+      ].join('\n');
+
+      alert(debugText);
+      console.log(debugText);
+    } catch (e) {
+      setError(`Debug failed: ${String(e)}`);
+    }
+  };
+
   // Convert tracks to game-compatible format
   const gameTracks: TrackInfo[] = tracks.map((t) => ({
     id: t.id,
@@ -436,6 +470,22 @@ export default function App() {
           }}
         >
           Play Game
+        </button>
+
+        <button
+          onClick={onDebugDemucs}
+          style={{
+            padding: '8px 16px',
+            fontSize: 12,
+            backgroundColor: '#666',
+            color: 'white',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+          title="Debug: Show Demucs detection info"
+        >
+          Debug Demucs
         </button>
       </section>
 

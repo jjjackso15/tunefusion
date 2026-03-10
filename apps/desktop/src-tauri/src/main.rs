@@ -599,6 +599,32 @@ fn check_demucs_available() -> bool {
     analysis::is_demucs_available()
 }
 
+/// Debug Demucs environment - returns detailed information about paths and detection.
+#[derive(Clone, Serialize)]
+struct DemucsDebugInfoResponse {
+    home_dir: Option<String>,
+    python_version: Option<String>,
+    pythonpath_set: Option<String>,
+    path_set: Option<String>,
+    site_packages_found: Vec<String>,
+    demucs_import_result: String,
+    demucs_location: Option<String>,
+}
+
+#[tauri::command]
+fn debug_demucs_environment() -> DemucsDebugInfoResponse {
+    let info = analysis::debug_demucs_environment();
+    DemucsDebugInfoResponse {
+        home_dir: info.home_dir,
+        python_version: info.python_version,
+        pythonpath_set: info.pythonpath_set,
+        path_set: info.path_set,
+        site_packages_found: info.site_packages_found,
+        demucs_import_result: info.demucs_import_result,
+        demucs_location: info.demucs_location,
+    }
+}
+
 /// Analyze track with vocal isolation using Demucs.
 #[tauri::command]
 async fn analyze_track_with_vocals(
@@ -1568,6 +1594,7 @@ fn main() {
             analyze_track,
             // Vocal isolation & MIDI import
             check_demucs_available,
+            debug_demucs_environment,
             analyze_track_with_vocals,
             list_midi_tracks,
             import_midi_chart,

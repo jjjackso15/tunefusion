@@ -7,18 +7,187 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Get the user's home directory.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var("HOME").ok().map(PathBuf::from)
+}
+
+/// Debug information about the Python/Demucs environment.
+#[derive(Debug, Clone)]
+pub struct DemucsDebugInfo {
+    pub home_dir: Option<String>,
+    pub python_version: Option<String>,
+    pub pythonpath_set: Option<String>,
+    pub path_set: Option<String>,
+    pub site_packages_found: Vec<String>,
+    pub demucs_import_result: String,
+    pub demucs_location: Option<String>,
+}
+
+/// Get debug information about the Demucs environment.
+pub fn debug_demucs_environment() -> DemucsDebugInfo {
+    let home = home_dir();
+    let home_str = home.as_ref().map(|h| h.display().to_string());
+
+    // Check which site-packages exist
+    let mut site_packages_found = Vec::new();
+    let mut pythonpath_parts = Vec::new();
+
+    if let Some(ref home_path) = home {
+        for version in &["3.14", "3.13", "3.12", "3.11", "3.10", "3.9"] {
+            let site_packages = home_path.join(format!(".local/lib/python{}/site-packages", version));
+            let exists = site_packages.exists();
+            let has_demucs = site_packages.join("demucs").exists();
+            site_packages_found.push(format!(
+                "python{}: {} (demucs: {})",
+                version,
+                if exists { "EXISTS" } else { "not found" },
+                if has_demucs { "YES" } else { "no" }
+            ));
+            if exists {
+                pythonpath_parts.push(site_packages.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let pythonpath_set = if pythonpath_parts.is_empty() {
+        None
+    } else {
+        Some(pythonpath_parts.join(":"))
+    };
+
+    // Get PATH we would set
+    let path_set = home.as_ref().and_then(|h| {
+        let local_bin = h.join(".local/bin");
+        if local_bin.exists() {
+            std::env::var("PATH").ok().map(|p| format!("{}:{}", local_bin.display(), p))
+        } else {
+            None
+        }
+    });
+
+    // Get Python version
+    let python_version = Command::new("python3")
+        .args(["--version"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        });
+
+    // Try to import demucs with our environment
+    let mut cmd = python_command();
+    cmd.args(["-c", "import demucs; print(demucs.__file__)"]);
+
+    let (demucs_import_result, demucs_location) = match cmd.output() {
+        Ok(o) => {
+            if o.status.success() {
+                let location = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                ("SUCCESS".to_string(), Some(location))
+            } else {
+                let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+                (format!("FAILED: {}", stderr), None)
+            }
+        }
+        Err(e) => (format!("ERROR running python3: {}", e), None),
+    };
+
+    DemucsDebugInfo {
+        home_dir: home_str,
+        python_version,
+        pythonpath_set,
+        path_set,
+        site_packages_found,
+        demucs_import_result,
+        demucs_location,
+    }
+}
+
+/// Build a Python command with proper environment for user packages.
+fn python_command() -> Command {
+    let mut cmd = Command::new("python3");
+
+    // Add user site-packages to PYTHONPATH
+    if let Some(home) = home_dir() {
+        // Try common Python versions (including newer ones)
+        let mut pythonpaths = Vec::new();
+        for version in &["3.14", "3.13", "3.12", "3.11", "3.10", "3.9"] {
+            let site_packages = home.join(format!(".local/lib/python{}/site-packages", version));
+            if site_packages.exists() {
+                pythonpaths.push(site_packages.to_string_lossy().to_string());
+                println!("[Demucs] Found site-packages: {}", site_packages.display());
+            }
+        }
+
+        // Also add the general .local/bin to PATH for demucs CLI
+        let local_bin = home.join(".local/bin");
+        if local_bin.exists() {
+            if let Ok(path) = std::env::var("PATH") {
+                let new_path = format!("{}:{}", local_bin.display(), path);
+                println!("[Demucs] Setting PATH: {}", new_path);
+                cmd.env("PATH", new_path);
+            }
+        }
+
+        if !pythonpaths.is_empty() {
+            let pythonpath = pythonpaths.join(":");
+            if let Ok(existing) = std::env::var("PYTHONPATH") {
+                let full_path = format!("{}:{}", pythonpath, existing);
+                println!("[Demucs] Setting PYTHONPATH: {}", full_path);
+                cmd.env("PYTHONPATH", full_path);
+            } else {
+                println!("[Demucs] Setting PYTHONPATH: {}", pythonpath);
+                cmd.env("PYTHONPATH", pythonpath);
+            }
+        } else {
+            println!("[Demucs] WARNING: No site-packages directories found in {}", home.display());
+        }
+    } else {
+        println!("[Demucs] WARNING: HOME environment variable not set!");
+    }
+
+    cmd
+}
+
 /// Check if Demucs is available on the system.
 pub fn is_demucs_available() -> bool {
-    Command::new("python3")
-        .args(["-c", "import demucs"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    println!("[Demucs] Checking if Demucs is available...");
+    println!("[Demucs] HOME={:?}", std::env::var("HOME"));
+
+    let output = python_command()
+        .args(["-c", "import demucs; print('OK:', demucs.__file__)"])
+        .output();
+
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            println!("[Demucs] Exit code: {:?}", o.status.code());
+            println!("[Demucs] stdout: {}", stdout);
+            println!("[Demucs] stderr: {}", stderr);
+
+            if o.status.success() {
+                println!("[Demucs] Demucs is available!");
+                true
+            } else {
+                eprintln!("[Demucs] Import failed: {}", stderr);
+                false
+            }
+        }
+        Err(e) => {
+            eprintln!("[Demucs] Failed to run python3: {}", e);
+            false
+        }
+    }
 }
 
 /// Get Demucs version if available.
 pub fn demucs_version() -> Option<String> {
-    let output = Command::new("python3")
+    let output = python_command()
         .args(["-c", "import demucs; print(demucs.__version__)"])
         .output()
         .ok()?;
@@ -74,8 +243,9 @@ pub fn isolate_vocals(
 ) -> Result<VocalIsolationResult> {
     if !is_demucs_available() {
         bail!(
-            "Demucs is not installed. Install with: pip install demucs\n\
-             Or use: pip install torch demucs"
+            "Demucs is not installed or not found. Install with:\n\
+             python3 -m pip install --user demucs\n\n\
+             If already installed, make sure it's accessible to the app."
         );
     }
 
@@ -86,8 +256,8 @@ pub fn isolate_vocals(
     let audio_path_str = audio_path.to_string_lossy();
     let output_dir_str = config.output_dir.to_string_lossy();
 
-    // Build demucs command
-    let mut cmd = Command::new("python3");
+    // Build demucs command with proper environment
+    let mut cmd = python_command();
     cmd.args(["-m", "demucs"]);
     cmd.args(["-n", &config.model]);
     cmd.args(["-o", &output_dir_str]);
