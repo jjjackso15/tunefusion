@@ -56,18 +56,16 @@ pub fn debug_demucs_environment() -> DemucsDebugInfo {
         Some(pythonpath_parts.join(":"))
     };
 
-    // Get PATH we would set
-    let path_set = home.as_ref().and_then(|h| {
-        let local_bin = h.join(".local/bin");
-        if local_bin.exists() {
-            std::env::var("PATH").ok().map(|p| format!("{}:{}", local_bin.display(), p))
-        } else {
-            None
-        }
-    });
+    // Get the clean PATH we would set
+    let path_set = Some(build_clean_path());
 
-    // Get Python version
-    let python_version = Command::new("python3")
+    // Find which system Python we'd use
+    let system_python = find_system_python();
+    site_packages_found.insert(0, format!("System Python: {}", system_python));
+
+    // Get Python version using system Python
+    let python_version = Command::new(&system_python)
+        .env_remove("PYTHONHOME")
         .args(["--version"])
         .output()
         .ok()
@@ -79,7 +77,7 @@ pub fn debug_demucs_environment() -> DemucsDebugInfo {
             }
         });
 
-    // Try to import demucs with our environment
+    // Try to import demucs with our clean environment
     let mut cmd = python_command();
     cmd.args(["-c", "import demucs; print(demucs.__file__)"]);
 
@@ -93,7 +91,7 @@ pub fn debug_demucs_environment() -> DemucsDebugInfo {
                 (format!("FAILED: {}", stderr), None)
             }
         }
-        Err(e) => (format!("ERROR running python3: {}", e), None),
+        Err(e) => (format!("ERROR running python: {}", e), None),
     };
 
     DemucsDebugInfo {
@@ -107,13 +105,52 @@ pub fn debug_demucs_environment() -> DemucsDebugInfo {
     }
 }
 
-/// Build a Python command with proper environment for user packages.
-fn python_command() -> Command {
-    let mut cmd = Command::new("python3");
+/// Find the system Python executable (avoiding AppImage-bundled Python).
+fn find_system_python() -> String {
+    // Check common system Python locations in order of preference
+    let candidates = [
+        "/usr/bin/python3",
+        "/usr/bin/python3.14",
+        "/usr/bin/python3.13",
+        "/usr/bin/python3.12",
+        "/usr/bin/python3.11",
+        "/usr/bin/python3.10",
+        "/bin/python3",
+    ];
 
-    // Add user site-packages to PYTHONPATH
+    for candidate in &candidates {
+        if std::path::Path::new(candidate).exists() {
+            println!("[Demucs] Using system Python: {}", candidate);
+            return candidate.to_string();
+        }
+    }
+
+    // Fallback to PATH-based python3 (may not work in AppImage)
+    println!("[Demucs] WARNING: No system Python found, falling back to 'python3'");
+    "python3".to_string()
+}
+
+/// Build a Python command with proper environment for user packages.
+/// This carefully avoids AppImage environment pollution.
+fn python_command() -> Command {
+    let python_path = find_system_python();
+    let mut cmd = Command::new(&python_path);
+
+    // CRITICAL: Remove any PYTHONHOME set by AppImage - this breaks system Python
+    cmd.env_remove("PYTHONHOME");
+
+    // Remove AppImage-specific variables that might interfere
+    cmd.env_remove("APPIMAGE");
+    cmd.env_remove("APPDIR");
+    cmd.env_remove("OWD");
+
+    // Build a clean PATH that prioritizes system directories
+    let clean_path = build_clean_path();
+    println!("[Demucs] Setting clean PATH: {}", clean_path);
+    cmd.env("PATH", &clean_path);
+
+    // Add user site-packages to PYTHONPATH (without AppImage paths)
     if let Some(home) = home_dir() {
-        // Try common Python versions (including newer ones)
         let mut pythonpaths = Vec::new();
         for version in &["3.14", "3.13", "3.12", "3.11", "3.10", "3.9"] {
             let site_packages = home.join(format!(".local/lib/python{}/site-packages", version));
@@ -123,26 +160,11 @@ fn python_command() -> Command {
             }
         }
 
-        // Also add the general .local/bin to PATH for demucs CLI
-        let local_bin = home.join(".local/bin");
-        if local_bin.exists() {
-            if let Ok(path) = std::env::var("PATH") {
-                let new_path = format!("{}:{}", local_bin.display(), path);
-                println!("[Demucs] Setting PATH: {}", new_path);
-                cmd.env("PATH", new_path);
-            }
-        }
-
         if !pythonpaths.is_empty() {
             let pythonpath = pythonpaths.join(":");
-            if let Ok(existing) = std::env::var("PYTHONPATH") {
-                let full_path = format!("{}:{}", pythonpath, existing);
-                println!("[Demucs] Setting PYTHONPATH: {}", full_path);
-                cmd.env("PYTHONPATH", full_path);
-            } else {
-                println!("[Demucs] Setting PYTHONPATH: {}", pythonpath);
-                cmd.env("PYTHONPATH", pythonpath);
-            }
+            println!("[Demucs] Setting PYTHONPATH: {}", pythonpath);
+            // Don't inherit existing PYTHONPATH - it may contain AppImage junk
+            cmd.env("PYTHONPATH", pythonpath);
         } else {
             println!("[Demucs] WARNING: No site-packages directories found in {}", home.display());
         }
@@ -151,6 +173,43 @@ fn python_command() -> Command {
     }
 
     cmd
+}
+
+/// Build a clean PATH without AppImage mount directories.
+fn build_clean_path() -> String {
+    let mut paths = Vec::new();
+
+    // Add user's local bin first
+    if let Some(home) = home_dir() {
+        let local_bin = home.join(".local/bin");
+        if local_bin.exists() {
+            paths.push(local_bin.to_string_lossy().to_string());
+        }
+    }
+
+    // Add standard system paths
+    let system_paths = [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/local/sbin",
+        "/usr/sbin",
+        "/sbin",
+    ];
+
+    for p in &system_paths {
+        if std::path::Path::new(p).exists() {
+            paths.push(p.to_string());
+        }
+    }
+
+    // Also include linuxbrew if present (common on Fedora/Bazzite)
+    let linuxbrew = "/home/linuxbrew/.linuxbrew/bin";
+    if std::path::Path::new(linuxbrew).exists() {
+        paths.push(linuxbrew.to_string());
+    }
+
+    paths.join(":")
 }
 
 /// Check if Demucs is available on the system.
