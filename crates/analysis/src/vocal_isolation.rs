@@ -269,6 +269,10 @@ pub struct VocalIsolationConfig {
     pub use_gpu: bool,
     /// Number of processing jobs
     pub jobs: u32,
+    /// Segment length in seconds (smaller = less memory, but more processing time)
+    pub segment: Option<u32>,
+    /// Overlap between segments (0.0 to 0.99)
+    pub overlap: Option<f32>,
 }
 
 impl Default for VocalIsolationConfig {
@@ -276,8 +280,12 @@ impl Default for VocalIsolationConfig {
         Self {
             model: "htdemucs".to_string(),
             output_dir: PathBuf::from("/tmp/tunefusion_stems"),
-            use_gpu: true,
+            // Default to CPU - more reliable across systems
+            use_gpu: false,
             jobs: 1,
+            // Use smaller segments to reduce memory usage
+            segment: Some(10),
+            overlap: Some(0.25),
         }
     }
 }
@@ -322,23 +330,63 @@ pub fn isolate_vocals(
     cmd.args(["-o", &output_dir_str]);
     cmd.args(["--two-stems", "vocals"]); // Only separate vocals vs accompaniment
 
-    if !config.use_gpu {
-        cmd.arg("--device").arg("cpu");
+    // Always use CPU for reliability (GPU requires specific CUDA setup)
+    cmd.arg("--device").arg("cpu");
+
+    // Segment settings to reduce memory usage
+    if let Some(segment) = config.segment {
+        cmd.args(["--segment", &segment.to_string()]);
+    }
+    if let Some(overlap) = config.overlap {
+        cmd.args(["--overlap", &overlap.to_string()]);
     }
 
     cmd.args(["-j", &config.jobs.to_string()]);
     cmd.arg(&*audio_path_str);
 
-    println!("Running Demucs: {:?}", cmd);
+    println!("[Demucs] Running command: {:?}", cmd);
+    println!("[Demucs] This may take several minutes depending on audio length...");
 
     let output = cmd
         .output()
         .context("Failed to execute Demucs")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Demucs failed: {}", stderr);
+    // Log both stdout and stderr for debugging
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !stdout.is_empty() {
+        println!("[Demucs] stdout: {}", stdout);
     }
+
+    if !output.status.success() {
+        // Try to extract a meaningful error from stderr (not just progress bars)
+        let error_lines: Vec<&str> = stderr
+            .lines()
+            .filter(|line| {
+                // Skip progress bar lines
+                !line.contains("seconds/s]") &&
+                !line.contains("| 0.0/") &&
+                !line.trim().is_empty()
+            })
+            .collect();
+
+        let error_msg = if error_lines.is_empty() {
+            format!(
+                "Demucs process exited with code {:?}. \
+                 This often means out of memory. Try closing other applications.\n\n\
+                 Full stderr:\n{}",
+                output.status.code(),
+                stderr
+            )
+        } else {
+            format!("Demucs failed: {}", error_lines.join("\n"))
+        };
+
+        bail!("{}", error_msg);
+    }
+
+    println!("[Demucs] Processing completed successfully");
 
     // Find the output files
     // Demucs outputs to: {output_dir}/{model}/{track_name}/vocals.wav
@@ -357,6 +405,8 @@ pub fn isolate_vocals(
             vocals_path.display()
         );
     }
+
+    println!("[Demucs] Vocals extracted to: {}", vocals_path.display());
 
     Ok(VocalIsolationResult {
         vocals_path,
