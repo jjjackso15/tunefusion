@@ -1,6 +1,108 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
+import { GameScreen } from './components/game';
+import { useGameStore, TrackInfo } from './stores/gameStore';
+
+type AnalysisProgress = {
+  phase: string;
+  step: number;
+  total_steps: number;
+  message: string;
+};
+
+type AnalysisResult = {
+  waveform: WaveformArtifact;
+  pitch: PitchContourArtifact;
+};
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: 16,
+        height: 16,
+        border: '2px solid #ccc',
+        borderTopColor: '#333',
+        borderRadius: '50%',
+        animation: 'spin 1s linear infinite',
+        marginRight: 8,
+        verticalAlign: 'middle',
+      }}
+    />
+  );
+}
+
+function ProgressIndicator({
+  title,
+  description,
+  elapsedSeconds,
+  step,
+  totalSteps,
+}: {
+  title: string;
+  description: string;
+  elapsedSeconds: number;
+  step?: number;
+  totalSteps?: number;
+}) {
+  const progressPercent = step && totalSteps ? (step / totalSteps) * 100 : 0;
+
+  return (
+    <div
+      style={{
+        padding: 16,
+        marginBottom: 16,
+        backgroundColor: '#f0f4ff',
+        border: '1px solid #c0d0ff',
+        borderRadius: 8,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+        <Spinner />
+        <strong>{title}</strong>
+      </div>
+      <p style={{ margin: 0, fontSize: 14, color: '#666' }}>{description}</p>
+
+      {step !== undefined && totalSteps !== undefined && (
+        <div style={{ marginTop: 12 }}>
+          <div
+            style={{
+              height: 8,
+              backgroundColor: '#ddd',
+              borderRadius: 4,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                width: `${progressPercent}%`,
+                backgroundColor: '#4a90d9',
+                borderRadius: 4,
+                transition: 'width 0.3s ease',
+              }}
+            />
+          </div>
+          <p style={{ margin: '8px 0 0', fontSize: 12, color: '#888' }}>
+            Step {step} of {totalSteps}
+          </p>
+        </div>
+      )}
+
+      <p style={{ margin: '8px 0 0', fontSize: 14, color: '#888' }}>
+        Elapsed: {elapsedSeconds}s
+      </p>
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  );
+}
 
 type TrackRecord = {
   id: string;
@@ -79,6 +181,8 @@ function PitchStats({ artifact }: { artifact: PitchContourArtifact }) {
 }
 
 export default function App() {
+  console.log('TuneFusion: App component rendering');
+
   const [tracks, setTracks] = useState<TrackRecord[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [waveformArtifact, setWaveformArtifact] = useState<WaveformArtifact | null>(null);
@@ -86,7 +190,14 @@ export default function App() {
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const [showGameMode, setShowGameMode] = useState(false);
+  const [appReady, setAppReady] = useState(false);
+  const timerRef = useRef<number | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
 
+  const { setGameState } = useGameStore();
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId) ?? null;
 
   const refreshTracks = async () => {
@@ -98,7 +209,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshTracks().catch((e) => setError(String(e)));
+    console.log('TuneFusion: initializing, loading tracks...');
+    refreshTracks()
+      .then(() => {
+        console.log('TuneFusion: tracks loaded successfully');
+        setAppReady(true);
+      })
+      .catch((e) => {
+        console.error('TuneFusion: failed to load tracks:', e);
+        setError(String(e));
+        setAppReady(true); // Still mark as ready to show error
+      });
   }, []);
 
   const onImportAudio = async () => {
@@ -120,6 +241,13 @@ export default function App() {
 
     setError('');
     setImporting(true);
+    setElapsedSeconds(0);
+
+    // Start elapsed time counter
+    const startTime = Date.now();
+    timerRef.current = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
 
     try {
       const track = await invoke<TrackRecord>('import_track', { audioPath: selected });
@@ -130,6 +258,10 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     } finally {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
       setImporting(false);
     }
   };
@@ -144,20 +276,73 @@ export default function App() {
     setAnalyzing(true);
     setWaveformArtifact(null);
     setPitchArtifact(null);
+    setElapsedSeconds(0);
+    setAnalysisProgress(null);
+
+    // Start elapsed time counter
+    const startTime = Date.now();
+    timerRef.current = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    // Listen for progress events
+    unlistenRef.current = await listen<AnalysisProgress>('analysis-progress', (event) => {
+      setAnalysisProgress(event.payload);
+    });
 
     try {
-      const [waveform, pitch] = await Promise.all([
-        invoke<WaveformArtifact>('analyze_audio_file', { trackId: selectedTrackId }),
-        invoke<PitchContourArtifact>('analyze_pitch_contour', { trackId: selectedTrackId }),
-      ]);
-      setWaveformArtifact(waveform);
-      setPitchArtifact(pitch);
+      const result = await invoke<AnalysisResult>('analyze_track', { trackId: selectedTrackId });
+      setWaveformArtifact(result.waveform);
+      setPitchArtifact(result.pitch);
     } catch (e) {
       setError(String(e));
     } finally {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
       setAnalyzing(false);
+      setAnalysisProgress(null);
     }
   };
+
+  // Convert tracks to game-compatible format
+  const gameTracks: TrackInfo[] = tracks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    duration_seconds: t.duration_seconds,
+  }));
+
+  // Handle entering game mode
+  const onStartGame = () => {
+    setShowGameMode(true);
+    setGameState('mode_select');
+  };
+
+  // Handle exiting game mode
+  const onExitGame = () => {
+    setShowGameMode(false);
+    setGameState('idle');
+  };
+
+  // If in game mode, render the game screen
+  if (showGameMode) {
+    return <GameScreen tracks={gameTracks} onBack={onExitGame} />;
+  }
+
+  // Show loading state while initializing
+  if (!appReady) {
+    return (
+      <main style={{ fontFamily: 'system-ui', padding: 32, textAlign: 'center' }}>
+        <h1>TuneFusion</h1>
+        <p style={{ color: '#666', marginTop: 16 }}>Loading...</p>
+      </main>
+    );
+  }
 
   return (
     <main style={{ fontFamily: 'system-ui', padding: 16, maxWidth: 900 }}>
@@ -175,7 +360,45 @@ export default function App() {
         >
           {analyzing ? 'Analyzing...' : 'Analyze Selected Track'}
         </button>
+
+        <button
+          onClick={onStartGame}
+          disabled={importing || analyzing || tracks.length === 0}
+          style={{
+            padding: '8px 16px',
+            fontSize: 16,
+            backgroundColor: '#4A90D9',
+            color: 'white',
+            border: 'none',
+            borderRadius: 4,
+            cursor: tracks.length === 0 ? 'not-allowed' : 'pointer',
+          }}
+        >
+          Play Game
+        </button>
       </section>
+
+      {importing && (
+        <ProgressIndicator
+          title="Importing audio..."
+          description="Decoding audio file and computing hash. This may take a moment for larger files."
+          elapsedSeconds={elapsedSeconds}
+        />
+      )}
+
+      {analyzing && (
+        <ProgressIndicator
+          title={analysisProgress?.message || "Analyzing audio..."}
+          description={
+            analysisProgress?.phase === 'pitch'
+              ? "Pitch detection is CPU-intensive. Use --release flag for faster analysis."
+              : "Processing your audio file..."
+          }
+          elapsedSeconds={elapsedSeconds}
+          step={analysisProgress?.step}
+          totalSteps={analysisProgress?.total_steps}
+        />
+      )}
 
       <section>
         <h2>Tracks</h2>

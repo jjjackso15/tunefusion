@@ -1,0 +1,30 @@
+[package]
+name = "game_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Audio I/O
+cpal = "0.15"
+
+# Pitch detection (McLeod algorithm)
+pitch-detection = "0.3"
+
+# Lock-free ring buffer for audio
+ringbuf = "0.3"
+
+# Thread communication
+crossbeam-channel = "0.5"
+
+# Shared audio engine for decoding
+audio_engine = { path = "../audio_engine" }
+
+[dev-dependencies]
+tempfile = "3"
+hound = "3"

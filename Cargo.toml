@@ -2,6 +2,7 @@
 members = [
     "crates/analysis",
     "crates/audio_engine",
+    "crates/game_engine",
     "apps/desktop/src-tauri"
 ]
 resolver = "2"
