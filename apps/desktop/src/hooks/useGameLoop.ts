@@ -24,6 +24,7 @@ export function useGameLoop() {
     setTargetPitches,
     triggerHitEffect,
     clearHitEffect,
+    setDebugMessage,
     lastRating,
   } = useGameStore();
 
@@ -82,6 +83,13 @@ export function useGameLoop() {
         setCountdown(event.payload.countdown);
       });
       unlistenRefs.current.push(unlistenState);
+
+      // Debug events
+      const unlistenDebug = await listen<string>('game:debug', (event) => {
+        console.log('[Game Debug]', event.payload);
+        setDebugMessage(event.payload);
+      });
+      unlistenRefs.current.push(unlistenDebug);
     };
 
     setupListeners();
@@ -94,7 +102,7 @@ export function useGameLoop() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [updatePlayback, updateUserPitch, updateScore, setGameState, setCountdown, setTargetPitches, triggerHitEffect, clearHitEffect]);
+  }, [updatePlayback, updateUserPitch, updateScore, setGameState, setCountdown, setTargetPitches, triggerHitEffect, clearHitEffect, setDebugMessage]);
 
   return null;
 }

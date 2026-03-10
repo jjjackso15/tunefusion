@@ -590,6 +590,313 @@ async fn analyze_track(
 }
 
 // ============================================================================
+// VOCAL ISOLATION & MIDI IMPORT COMMANDS
+// ============================================================================
+
+/// Check if Demucs is available for vocal isolation.
+#[tauri::command]
+fn check_demucs_available() -> bool {
+    analysis::is_demucs_available()
+}
+
+/// Analyze track with vocal isolation using Demucs.
+#[tauri::command]
+async fn analyze_track_with_vocals(
+    track_id: String,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AnalysisResult, String> {
+    let db_path = state.db_path.clone();
+    let artifacts_root = state.artifacts_root.clone();
+
+    let app_handle_clone = app_handle.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db(&db_path)?;
+        let track = load_track(&conn, &track_id)?;
+        let audio_path = Path::new(&track.audio_path);
+
+        // Phase 1: Vocal isolation with Demucs
+        let _ = app_handle_clone.emit(
+            "analysis-progress",
+            AnalysisProgress {
+                phase: "vocals".to_string(),
+                step: 1,
+                total_steps: 4,
+                message: "Isolating vocals with Demucs (this may take several minutes)...".to_string(),
+            },
+        );
+
+        let vocal_config = analysis::VocalIsolationConfig {
+            output_dir: artifacts_root.join("stems"),
+            ..Default::default()
+        };
+
+        let vocal_result = analysis::isolate_vocals(audio_path, &vocal_config)
+            .map_err(|e| e.to_string())?;
+
+        // Phase 2: Waveform analysis
+        let _ = app_handle_clone.emit(
+            "analysis-progress",
+            AnalysisProgress {
+                phase: "waveform".to_string(),
+                step: 2,
+                total_steps: 4,
+                message: "Analyzing waveform...".to_string(),
+            },
+        );
+
+        let waveform_envelope =
+            analysis::analyze_waveform_to_artifact_json(audio_path, &artifacts_root)
+                .map_err(|e| e.to_string())?;
+
+        let waveform_artifact_path = artifacts_root
+            .join("analysis_runs")
+            .join(&waveform_envelope.run_id)
+            .join("waveform_peaks.json")
+            .to_string_lossy()
+            .to_string();
+
+        conn.execute(
+            "INSERT INTO analysis_runs (id, track_id, pipeline_version, params_hash, audio_hash, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'success', ?6)",
+            params![
+                waveform_envelope.run_id,
+                track_id,
+                waveform_envelope.pipeline_version,
+                waveform_envelope.params_hash,
+                waveform_envelope.audio_hash,
+                waveform_envelope.created_at,
+            ],
+        )
+        .map_err(|e| format!("failed to persist waveform analysis run: {e}"))?;
+
+        conn.execute(
+            "INSERT INTO artifacts (analysis_run_id, kind, schema_version, file_path, sample_rate, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                waveform_envelope.run_id,
+                waveform_envelope.kind,
+                waveform_envelope.schema_version,
+                waveform_artifact_path,
+                waveform_envelope.sample_rate,
+                waveform_envelope.created_at,
+            ],
+        )
+        .map_err(|e| format!("failed to persist waveform artifact: {e}"))?;
+
+        // Phase 3: Pitch contour analysis ON VOCALS ONLY
+        let _ = app_handle_clone.emit(
+            "analysis-progress",
+            AnalysisProgress {
+                phase: "pitch".to_string(),
+                step: 3,
+                total_steps: 4,
+                message: "Analyzing pitch contour from isolated vocals...".to_string(),
+            },
+        );
+
+        // Analyze the isolated vocals instead of the full mix
+        let pitch_envelope =
+            analysis::analyze_pitch_contour_to_artifact_json(&vocal_result.vocals_path, &artifacts_root)
+                .map_err(|e| e.to_string())?;
+
+        let pitch_artifact_path = artifacts_root
+            .join("analysis_runs")
+            .join(&pitch_envelope.run_id)
+            .join("pitch_contour.json")
+            .to_string_lossy()
+            .to_string();
+
+        conn.execute(
+            "INSERT INTO analysis_runs (id, track_id, pipeline_version, params_hash, audio_hash, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'success', ?6)",
+            params![
+                pitch_envelope.run_id,
+                track_id,
+                format!("{}_demucs", pitch_envelope.pipeline_version),
+                pitch_envelope.params_hash,
+                pitch_envelope.audio_hash,
+                pitch_envelope.created_at,
+            ],
+        )
+        .map_err(|e| format!("failed to persist pitch analysis run: {e}"))?;
+
+        conn.execute(
+            "INSERT INTO artifacts (analysis_run_id, kind, schema_version, file_path, sample_rate, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                pitch_envelope.run_id,
+                pitch_envelope.kind,
+                pitch_envelope.schema_version,
+                pitch_artifact_path,
+                pitch_envelope.sample_rate,
+                pitch_envelope.created_at,
+            ],
+        )
+        .map_err(|e| format!("failed to persist pitch artifact: {e}"))?;
+
+        // Phase 4: Complete
+        let _ = app_handle_clone.emit(
+            "analysis-progress",
+            AnalysisProgress {
+                phase: "complete".to_string(),
+                step: 4,
+                total_steps: 4,
+                message: "Analysis complete (with vocal isolation)!".to_string(),
+            },
+        );
+
+        Ok(AnalysisResult {
+            waveform: waveform_envelope,
+            pitch: pitch_envelope,
+        })
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+/// MIDI track info for listing.
+#[derive(Debug, Clone, Serialize)]
+pub struct MidiTrackInfo {
+    pub index: usize,
+    pub name: String,
+    pub note_count: usize,
+}
+
+/// List tracks in a MIDI file.
+#[tauri::command]
+fn list_midi_tracks(midi_path: String) -> Result<Vec<MidiTrackInfo>, String> {
+    let tracks = analysis::list_midi_tracks(Path::new(&midi_path))
+        .map_err(|e| e.to_string())?;
+
+    Ok(tracks
+        .into_iter()
+        .map(|(index, name, note_count)| MidiTrackInfo {
+            index,
+            name,
+            note_count,
+        })
+        .collect())
+}
+
+/// Import MIDI file as pitch chart for a track.
+#[tauri::command]
+async fn import_midi_chart(
+    track_id: String,
+    midi_path: String,
+    track_index: Option<usize>,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_path = state.db_path.clone();
+    let artifacts_root = state.artifacts_root.clone();
+
+    let app_handle_clone = app_handle.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db(&db_path)?;
+        let track = load_track(&conn, &track_id)?;
+
+        let _ = app_handle_clone.emit(
+            "analysis-progress",
+            AnalysisProgress {
+                phase: "midi".to_string(),
+                step: 1,
+                total_steps: 2,
+                message: "Importing MIDI chart...".to_string(),
+            },
+        );
+
+        let midi_config = analysis::MidiImportConfig {
+            track_index,
+            output_sample_rate: track.sample_rate,
+            ..Default::default()
+        };
+
+        let pitch_contour = analysis::import_midi_to_pitch_contour(
+            Path::new(&midi_path),
+            track.duration_seconds,
+            &midi_config,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Create artifact envelope
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_dir = artifacts_root.join("analysis_runs").join(&run_id);
+        std::fs::create_dir_all(&run_dir)
+            .map_err(|e| format!("Failed to create run dir: {e}"))?;
+
+        let params = analysis::PitchContourParams::default();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        let envelope = analysis::ArtifactEnvelope {
+            kind: "pitch_contour".to_string(),
+            schema_version: "1".to_string(),
+            run_id: run_id.clone(),
+            created_at: created_at.clone(),
+            pipeline_version: "midi_import@0.1".to_string(),
+            params_hash: analysis::sha256_bytes(&serde_json::to_vec(&params).unwrap_or_default()),
+            audio_hash: track.audio_hash.clone(),
+            sample_rate: track.sample_rate,
+            payload: analysis::ArtifactPayload::PitchContour {
+                params,
+                pitch_contour,
+            },
+        };
+
+        let json_path = run_dir.join("pitch_contour.json");
+        let json = serde_json::to_string_pretty(&envelope)
+            .map_err(|e| format!("JSON serialization failed: {e}"))?;
+        std::fs::write(&json_path, json)
+            .map_err(|e| format!("Failed to write artifact: {e}"))?;
+
+        // Persist to database
+        conn.execute(
+            "INSERT INTO analysis_runs (id, track_id, pipeline_version, params_hash, audio_hash, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'success', ?6)",
+            params![
+                run_id,
+                track_id,
+                "midi_import@0.1",
+                envelope.params_hash,
+                track.audio_hash,
+                created_at,
+            ],
+        )
+        .map_err(|e| format!("Failed to persist analysis run: {e}"))?;
+
+        conn.execute(
+            "INSERT INTO artifacts (analysis_run_id, kind, schema_version, file_path, sample_rate, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                run_id,
+                "pitch_contour",
+                "1",
+                json_path.to_string_lossy().to_string(),
+                track.sample_rate,
+                created_at,
+            ],
+        )
+        .map_err(|e| format!("Failed to persist artifact: {e}"))?;
+
+        let _ = app_handle_clone.emit(
+            "analysis-progress",
+            AnalysisProgress {
+                phase: "complete".to_string(),
+                step: 2,
+                total_steps: 2,
+                message: "MIDI chart imported successfully!".to_string(),
+            },
+        );
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+// ============================================================================
 // GAME ENGINE COMMANDS
 // ============================================================================
 
@@ -701,6 +1008,7 @@ fn run_game_thread(
     let mut game_state = GameState::Ready;
     let mut start_time: Option<Instant> = None;
     let mut game_info: Option<GameInfo> = None;
+    let mut sample_buffer: Vec<f32> = Vec::with_capacity(4096); // Accumulate samples for pitch detection
 
     loop {
         let loop_start = Instant::now();
@@ -730,8 +1038,9 @@ fn run_game_thread(
                         }
                     }
 
-                    // Reset scoring
+                    // Reset scoring and buffer
                     scoring.reset();
+                    sample_buffer.clear();
                     target_pitches = pitches.clone();
                     game_state = GameState::Ready;
                     start_time = None;
@@ -776,9 +1085,16 @@ fn run_game_thread(
                     if let Some(ref p) = player {
                         p.play();
                     }
-                    if let Some(ref m) = mic {
+
+                    // Start mic capture
+                    let mic_status = if let Some(ref m) = mic {
                         m.start();
-                    }
+                        "Microphone active".to_string()
+                    } else {
+                        "No microphone available".to_string()
+                    };
+                    let _ = app_handle.emit("game:debug", &mic_status);
+
                     game_state = GameState::Playing;
                     start_time = Some(Instant::now());
 
@@ -869,13 +1185,50 @@ fn run_game_thread(
 
                 // Process microphone input
                 if let Some(ref mut m) = mic {
-                    let samples = m.read_samples();
-                    if samples.len() >= pitch_detector.window_size() {
+                    let new_samples = m.read_samples();
+
+                    // Accumulate samples in buffer
+                    sample_buffer.extend(new_samples);
+
+                    // Keep buffer from growing too large (keep last 4096 samples)
+                    let max_buffer = 4096;
+                    if sample_buffer.len() > max_buffer {
+                        let drain_count = sample_buffer.len() - max_buffer;
+                        sample_buffer.drain(0..drain_count);
+                    }
+
+                    let sample_count = sample_buffer.len();
+                    let window_size = pitch_detector.window_size();
+
+                    // Debug: periodically log sample count
+                    static DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    let count = DEBUG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if count % 50 == 0 {
+                        let _ = app_handle.emit("game:debug", format!(
+                            "Mic buffer: {} (need {})",
+                            sample_count,
+                            window_size
+                        ));
+                    }
+
+                    if sample_count >= window_size {
                         let elapsed_ms = start_time
                             .map(|t| t.elapsed().as_millis() as u64)
                             .unwrap_or(0);
 
-                        let pitch_event = pitch_detector.detect_event(&samples, elapsed_ms);
+                        // Use the most recent samples for detection
+                        let detect_samples = &sample_buffer[sample_buffer.len() - window_size..];
+                        let pitch_event = pitch_detector.detect_event(detect_samples, elapsed_ms);
+
+                        // Debug: log when pitch is detected
+                        if pitch_event.pitch_hz.is_some() {
+                            let _ = app_handle.emit("game:debug", format!(
+                                "Pitch: {:.1} Hz ({:.0}%)",
+                                pitch_event.pitch_hz.unwrap(),
+                                pitch_event.confidence * 100.0
+                            ));
+                        }
+
                         let _ = app_handle.emit("game:user_pitch", &pitch_event);
 
                         // Score the pitch
@@ -1213,6 +1566,11 @@ fn main() {
             analyze_audio_file,
             analyze_pitch_contour,
             analyze_track,
+            // Vocal isolation & MIDI import
+            check_demucs_available,
+            analyze_track_with_vocals,
+            list_midi_tracks,
+            import_midi_chart,
             // Game engine
             start_game,
             begin_countdown,

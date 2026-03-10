@@ -109,6 +109,9 @@ interface GameStore {
   showHitEffect: boolean;
   hitEffectRating: HitRating | null;
 
+  // Debug
+  debugMessage: string;
+
   // Actions
   setGameState: (state: GameState) => void;
   setGameMode: (mode: GameMode | null) => void;
@@ -127,6 +130,8 @@ interface GameStore {
 
   triggerHitEffect: (rating: HitRating) => void;
   clearHitEffect: () => void;
+
+  setDebugMessage: (msg: string) => void;
 
   reset: () => void;
 }
@@ -162,6 +167,8 @@ const initialState = {
 
   showHitEffect: false,
   hitEffectRating: null,
+
+  debugMessage: '',
 };
 
 export const useGameStore = create<GameStore>((set) => ({
@@ -215,6 +222,8 @@ export const useGameStore = create<GameStore>((set) => ({
     showHitEffect: false,
     hitEffectRating: null,
   }),
+
+  setDebugMessage: (msg) => set({ debugMessage: msg }),
 
   reset: () => set(initialState),
 }));

@@ -7,9 +7,13 @@ use uuid::Uuid;
 
 mod pitch_contour;
 mod waveform;
+pub mod vocal_isolation;
+pub mod midi_import;
 
 pub use pitch_contour::*;
 pub use waveform::*;
+pub use vocal_isolation::{isolate_vocals, is_demucs_available, VocalIsolationConfig, VocalIsolationResult};
+pub use midi_import::{import_midi_to_pitch_contour, list_midi_tracks, MidiImportConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactEnvelope {

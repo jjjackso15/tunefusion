@@ -30,8 +30,11 @@ pub struct PitchContourParams {
 impl Default for PitchContourParams {
     fn default() -> Self {
         Self {
-            fmin_hz: 65.0,
-            fmax_hz: 1047.0,
+            // Vocal range focused: skip bass guitar (~40-120 Hz)
+            // Male vocals: ~85-350 Hz fundamental
+            // Female vocals: ~165-500 Hz fundamental
+            fmin_hz: 150.0,  // Start above bass guitar to focus on vocals
+            fmax_hz: 800.0,  // Upper vocal fundamental range
             frame_length: 2048,
             hop_length: 512,
             resolution: 0.1,

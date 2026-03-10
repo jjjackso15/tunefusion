@@ -185,7 +185,12 @@ function PlayerLine() {
  * Score display overlay.
  */
 function ScoreOverlay() {
-  const { score, streak, accuracyPct, showHitEffect, hitEffectRating } = useGameStore();
+  const { score, streak, accuracyPct, showHitEffect, hitEffectRating, userPitch, userConfidence, targetPitches, debugMessage, playbackPosition } = useGameStore();
+
+  // Find the current target pitch (closest to playback position)
+  const currentTarget = targetPitches.find(t =>
+    t.voiced && t.frequency_hz !== null && Math.abs(t.time_ms - playbackPosition) < 100
+  );
 
   return (
     <div
@@ -225,6 +230,26 @@ function ScoreOverlay() {
           {hitEffectRating.toUpperCase()}!
         </div>
       )}
+
+      {/* Debug info */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 32,
+          right: 16,
+          fontSize: 12,
+          color: '#aaa',
+          textAlign: 'right',
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          padding: 8,
+          borderRadius: 4,
+        }}
+      >
+        <div>Your pitch: {userPitch ? `${userPitch.toFixed(1)} Hz` : 'No signal'}</div>
+        <div>Target pitch: {currentTarget?.frequency_hz ? `${currentTarget.frequency_hz.toFixed(1)} Hz` : 'None'}</div>
+        <div>Confidence: {(userConfidence * 100).toFixed(0)}%</div>
+        <div style={{ color: '#666', marginTop: 4, fontSize: 10 }}>{debugMessage}</div>
+      </div>
 
       <style>{`
         @keyframes hitPop {

@@ -266,7 +266,7 @@ export default function App() {
     }
   };
 
-  const onAnalyzeTrack = async () => {
+  const onAnalyzeTrack = async (useVocalIsolation = false) => {
     if (!selectedTrackId) {
       setError('Select a track first.');
       return;
@@ -291,7 +291,8 @@ export default function App() {
     });
 
     try {
-      const result = await invoke<AnalysisResult>('analyze_track', { trackId: selectedTrackId });
+      const command = useVocalIsolation ? 'analyze_track_with_vocals' : 'analyze_track';
+      const result = await invoke<AnalysisResult>(command, { trackId: selectedTrackId });
       setWaveformArtifact(result.waveform);
       setPitchArtifact(result.pitch);
     } catch (e) {
@@ -305,6 +306,47 @@ export default function App() {
         unlistenRef.current();
         unlistenRef.current = null;
       }
+      setAnalyzing(false);
+      setAnalysisProgress(null);
+    }
+  };
+
+  const onImportMidi = async () => {
+    if (!selectedTrackId) {
+      setError('Select a track first.');
+      return;
+    }
+
+    const isTauri = Boolean((window as any).__TAURI_INTERNALS__);
+    if (!isTauri) {
+      setError('File dialog not available in web mode.');
+      return;
+    }
+
+    const selected = await open({
+      multiple: false,
+      title: 'Import MIDI vocal chart',
+      filters: [{ name: 'MIDI', extensions: ['mid', 'midi'] }],
+    });
+
+    if (!selected) return;
+
+    setError('');
+    setAnalyzing(true);
+    setAnalysisProgress({ phase: 'midi', step: 1, total_steps: 2, message: 'Importing MIDI...' });
+
+    try {
+      await invoke('import_midi_chart', {
+        trackId: selectedTrackId,
+        midiPath: selected,
+        trackIndex: null, // Auto-detect vocal track
+      });
+      setAnalysisProgress({ phase: 'complete', step: 2, total_steps: 2, message: 'MIDI imported!' });
+      // Refresh to show the new analysis
+      await refreshTracks();
+    } catch (e) {
+      setError(String(e));
+    } finally {
       setAnalyzing(false);
       setAnalysisProgress(null);
     }
@@ -354,11 +396,30 @@ export default function App() {
         </button>
 
         <button
-          onClick={onAnalyzeTrack}
+          onClick={() => onAnalyzeTrack(false)}
           disabled={analyzing || importing || !selectedTrackId}
           style={{ padding: '8px 16px', fontSize: 16 }}
+          title="Basic analysis (may include bass/instruments)"
         >
-          {analyzing ? 'Analyzing...' : 'Analyze Selected Track'}
+          {analyzing ? 'Analyzing...' : 'Analyze Track'}
+        </button>
+
+        <button
+          onClick={() => onAnalyzeTrack(true)}
+          disabled={analyzing || importing || !selectedTrackId}
+          style={{ padding: '8px 16px', fontSize: 16, backgroundColor: '#6B8E23' }}
+          title="Uses Demucs AI to isolate vocals first (more accurate, slower)"
+        >
+          Analyze with Vocal Isolation
+        </button>
+
+        <button
+          onClick={onImportMidi}
+          disabled={analyzing || importing || !selectedTrackId}
+          style={{ padding: '8px 16px', fontSize: 16, backgroundColor: '#8B4513' }}
+          title="Import a MIDI file with the vocal melody"
+        >
+          Import MIDI Chart
         </button>
 
         <button
