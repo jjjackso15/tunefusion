@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { useGameStore, PlaybackTick, PitchEvent, ScoreUpdate } from '../stores/gameStore';
+import { useGameStore, PlaybackTick, PitchEvent, ScoreUpdate, TargetPitch } from '../stores/gameStore';
 
 interface GameStateChange {
   state: string;
@@ -21,6 +21,7 @@ export function useGameLoop() {
     updateScore,
     setGameState,
     setCountdown,
+    setTargetPitches,
     triggerHitEffect,
     clearHitEffect,
     lastRating,
@@ -34,6 +35,13 @@ export function useGameLoop() {
         unlisten();
       }
       unlistenRefs.current = [];
+
+      // Target pitches event
+      const unlistenTargets = await listen<TargetPitch[]>('game:target_pitches', (event) => {
+        console.log('Received target pitches:', event.payload.length);
+        setTargetPitches(event.payload);
+      });
+      unlistenRefs.current.push(unlistenTargets);
 
       // Playback tick events
       const unlistenPlayback = await listen<PlaybackTick>('game:playback_tick', (event) => {
@@ -86,7 +94,7 @@ export function useGameLoop() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [updatePlayback, updateUserPitch, updateScore, setGameState, setCountdown, triggerHitEffect, clearHitEffect]);
+  }, [updatePlayback, updateUserPitch, updateScore, setGameState, setCountdown, setTargetPitches, triggerHitEffect, clearHitEffect]);
 
   return null;
 }

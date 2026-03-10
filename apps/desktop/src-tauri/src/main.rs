@@ -719,14 +719,41 @@ fn run_game_thread(
                     }
 
                     // Initialize mic capture
-                    mic = MicCapture::new().ok();
+                    match MicCapture::new() {
+                        Ok(m) => {
+                            println!("Microphone initialized successfully");
+                            mic = Some(m);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to initialize microphone: {e}");
+                            mic = None;
+                        }
+                    }
 
                     // Reset scoring
                     scoring.reset();
-                    target_pitches = pitches;
+                    target_pitches = pitches.clone();
                     game_state = GameState::Ready;
                     start_time = None;
                     game_info = Some(GameInfo { track_id, player_name, mode });
+
+                    // Send target pitches to frontend
+                    #[derive(Clone, serde::Serialize)]
+                    struct TargetPitchEvent {
+                        time_ms: u64,
+                        frequency_hz: Option<f64>,
+                        voiced: bool,
+                    }
+                    let pitch_events: Vec<TargetPitchEvent> = pitches
+                        .iter()
+                        .map(|p| TargetPitchEvent {
+                            time_ms: p.time_ms,
+                            frequency_hz: p.frequency_hz,
+                            voiced: p.voiced,
+                        })
+                        .collect();
+                    println!("Sending {} target pitches to frontend", pitch_events.len());
+                    let _ = app_handle.emit("game:target_pitches", &pitch_events);
 
                     let _ = app_handle.emit("game:state_change", GameStateChange {
                         state: GameState::Ready,
