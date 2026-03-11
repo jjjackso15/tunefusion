@@ -283,8 +283,8 @@ impl Default for VocalIsolationConfig {
             // Default to CPU - more reliable across systems
             use_gpu: false,
             jobs: 1,
-            // Use smaller segments to reduce memory usage
-            segment: Some(10),
+            // htdemucs max segment is 7.8 seconds - use 7 to be safe
+            segment: Some(7),
             overlap: Some(0.25),
         }
     }
